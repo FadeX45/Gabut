@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Duel Monsters GX Offline</title>
+<link rel="manifest" href="manifest.json"><meta name="theme-color" content="#0a1230">
+<style>
+:root{--bg:#0a1230;--pn:#101c46;--cy:#19e6ff;--tx:#e8f6ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:13px system-ui,sans-serif}
+#app{max-width:900px;margin:auto;padding:6px}
+.lp{display:flex;justify-content:space-between;padding:4px 8px;border:1px solid var(--cy);border-radius:6px;background:var(--pn);box-shadow:0 0 8px #19e6ff55}
+.row{display:flex;gap:6px;justify-content:center;margin:5px 0;flex-wrap:wrap}
+.z{width:30%;max-width:170px;min-height:118px;border:1px dashed #19e6ff66;border-radius:6px;padding:2px}
+.card{color:#111;border-radius:6px;padding:4px;font-size:11px;height:100%;min-height:112px;cursor:pointer;border:2px solid #0006}
+.card b{display:block;font-size:12px}.card small{display:block;opacity:.85}
+.card.sel{outline:3px solid var(--cy)}.card.def{transform:rotate(90deg) scale(.8)}
+.back{background:repeating-linear-gradient(45deg,#233,#233 6px,#355 6px,#355 12px);color:#fff}
+.hand .card{width:112px}.hand{overflow-x:auto;flex-wrap:nowrap;justify-content:flex-start}
+button{background:var(--pn);color:var(--cy);border:1px solid var(--cy);border-radius:6px;padding:7px 10px;margin:2px}
+#log{height:80px;overflow:auto;background:#0006;padding:4px;border-radius:6px;font-size:11px}
+#info{background:var(--pn);padding:5px;border-radius:6px;min-height:42px}
+</style></head><body><div id="app">
+<div class="lp"><span id="l1"></span><span id="ph"></span></div>
+<div class="row" id="s1"></div><div class="row" id="m1"></div>
+<div class="row" id="m0"></div><div class="row" id="s0"></div>
+<div class="lp"><span id="l0"></span><span id="dk"></span></div>
+<div class="row" id="ctl"></div><div id="info">Pilih kartu.</div>
+<div class="row hand" id="hand"></div><div id="log"></div></div>
+<script>
+// ===== DATABASE (ringkas: contoh kartu; id,[nama,jenis,attr,lv,atk,def,type,efek]) =====
+const COL={N:'#C9A063',E:'#D5A43C',F:'#9B6DB8',R:'#74A3D8',S:'#1F9D77',T:'#D96AA7'};
+const AT={LIGHT:'☀',DARK:'🌑',EARTH:'⛰',WATER:'🌊',FIRE:'🔥',WIND:'🌪'};
+const D={
+BE:['Blue-Eyes White Dragon','N','LIGHT',8,3000,2500,'Dragon','-'],
+DM:['Dark Magician','N','DARK',7,2500,2100,'Spellcaster','-'],
+RE:['Red-Eyes B. Dragon','N','DARK',7,2400,2000,'Dragon','-'],
+SS:['Summoned Skull','N','DARK',6,2500,1200,'Fiend','-'],
+CD:['Curse of Dragon','N','DARK',5,2000,1500,'Dragon','-'],
+GF:['Gaia The Fierce Knight','N','EARTH',7,2300,2100,'Warrior','-'],
+CG:['Celtic Guardian','N','EARTH',4,1400,1200,'Warrior','-'],
+FI:['Feral Imp','N','DARK',4,1300,1400,'Fiend','-'],
+GS:['Giant Soldier of Stone','N','EARTH',3,1300,2000,'Rock','-'],
+AV:['Elemental HERO Avian','E','WIND',3,1000,1000,'Warrior','Bahan Fusion HERO.'],
+BU:['Elemental HERO Burstinatrix','E','FIRE',3,1200,800,'Warrior','Bahan Fusion HERO.'],
+CL:['Elemental HERO Clayman','E','EARTH',4,800,2000,'Warrior','-'],
+GD:['Gaia the Dragon Champion','F','WIND',7,2600,2100,'Dragon','Fusion: Gaia The Fierce Knight + Curse of Dragon'],
+FW:['Elemental HERO Flame Wingman','F','WIND',6,2100,1200,'Warrior','Fusion: Avian + Burstinatrix'],
+BS:['Black Skull Dragon','F','DARK',9,3200,2500,'Dragon','Fusion: Summoned Skull + Red-Eyes B. Dragon'],
+PO:['Polymerization','S','',0,0,0,'Normal Spell','Fusion Summon dari tangan/lapangan.'],
+DK:['Dian Keto the Cure Master','S','',0,0,0,'Normal Spell','Dapat 1000 LP.'],
+RG:['Raigeki','S','',0,0,0,'Normal Spell','Hancurkan semua monster lawan.'],
+MF:['Mirror Force','T','',0,0,0,'Normal Trap','Saat lawan menyerang: hancurkan semua monster posisi ATK lawan.']};
+const FU={GD:['GF','CD'],FW:['AV','BU'],BS:['SS','RE']};
+const DECK=['BE','DM','RE','SS','CD','GF','CG','CG','FI','FI','GS','GS','AV','BU','CL','CL','PO','DK','RG','MF'];
+// ===== DUEL ENGINE =====
+const $=s=>document.querySelector(s);let G,sel=null,diff='normal',ev=[];
+const mk=id=>{const d=D[id];return{id,n:d[0],t:d[1],a:d[2],lv:d[3],atk:d[4],def:d[5],ty:d[6],fx:d[7],pos:'atk',fd:false,ad:false}};
+const sh=a=>{for(let i=a.length-1;i>0;i--){let j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a};
+const newP=()=>({lp:4000,deck:sh(DECK.map(mk)),hand:[],mz:[null,null,null],st:[null,null,null],gy:[],bn:[],ex:['GD','FW','BS']});
+const log=m=>{G.log.push(m);ev.push({turn:G.turn,m})};
+function start(){G={p:[newP(),newP()],t:0,ph:'Main',ns:0,turn:1,log:[],over:false};ev=[];
+ G.p.forEach(p=>{for(let i=0;i<4;i++)p.hand.push(p.deck.pop())});log('Duel mulai. Pemain 1 tidak draw.');render()}
+function draw(k){const p=G.p[k];if(!p.deck.length){G.over=1;log('Deck habis! P'+(k+1)+' kalah.');return}p.hand.push(p.deck.pop());log('DRAW_CARD P'+(k+1))}
+const free=(k,z)=>G.p[k][z].indexOf(null);
+function kill(k,z,i){const p=G.p[k],c=p[z][i];if(!c)return;p[z][i]=null;c.pos='atk';c.fd=false;p.gy.push(c);log(c.n+' ke Graveyard')}
+function win(){G.p.forEach((p,k)=>{if(p.lp<=0&&!G.over){p.lp=0;G.over=1;log('DUEL_END: P'+(2-k)+' menang!')}})}
+function summon(k,hi,set){const p=G.p[k],c=p.hand[hi];if(!c||c.t=='S'||c.t=='T'||G.ph!='Main'||G.ns)return false;
+ let need=c.lv>=7?2:c.lv>=5?1:0;const ms=p.mz.map((x,i)=>x?i:-1).filter(i=>i>=0).sort((a,b)=>p.mz[a].atk-p.mz[b].atk);
+ if(set)need=0;if(ms.length<need)return false;
+ if(need==0&&free(k,'mz')<0)return false;
+ for(let n=0;n<need;n++)kill(k,'mz',ms[n]);
+ const z=free(k,'mz');p.hand.splice(hi,1);p.mz[z]=c;c.pos=set?'def':'atk';c.fd=!!set;c.ad=1;G.ns=1;
+ log((set?'SET_MONSTER ':need?'TRIBUTE_SUMMON ':'NORMAL_SUMMON ')+(set?'':c.n));return true}
+function fuse(k){const p=G.p[k];for(const f of p.ex){const m=FU[f];const src=[];let ok=true;
+  for(const id of m){let i=p.hand.findIndex((c,x)=>c.id==id&&!src.some(s=>s.z=='hand'&&s.i==x));let z='hand';
+   if(i<0){i=p.mz.findIndex((c,x)=>c&&c.id==id&&!src.some(s=>s.z=='mz'&&s.i==x));z='mz'}
+   if(i<0){ok=false;break}src.push({z,i})}
+  if(!ok)continue;
+  src.filter(s=>s.z=='mz').forEach(s=>kill(k,'mz',s.i));
+  src.filter(s=>s.z=='hand').sort((a,b)=>b.i-a.i).forEach(s=>{p.gy.push(p.hand[s.i]);p.hand.splice(s.i,1)});
+  const z=free(k,'mz');if(z<0)return false;const c=mk(f);c.ad=1;p.mz[z]=c;p.ex.splice(p.ex.indexOf(f),1);log('FUSION_SUMMON '+c.n);return true}
+ return false}
+function act(k,hi){const p=G.p[k],c=p.hand[hi];if(!c||c.t!='S'||G.ph!='Main')return false;
+ if(c.id=='PO'){p.hand.splice(hi,1);if(!fuse(k)){p.hand.splice(hi,0,c);return false}p.gy.push(c)}
+ else if(c.id=='DK'){p.hand.splice(hi,1);p.gy.push(c);p.lp+=1000;log('ACTIVATE_SPELL Dian Keto: +1000 LP P'+(k+1))}
+ else if(c.id=='RG'){p.hand.splice(hi,1);p.gy.push(c);G.p[1-k].mz.forEach((x,i)=>kill(1-k,'mz',i));log('ACTIVATE_SPELL Raigeki')}
+ return true}
+function setST(k,hi){const p=G.p[k],c=p.hand[hi],z=free(k,'st');if(!c||c.t!='T'||z<0||G.ph!='Main')return false;
+ p.hand.splice(hi,1);p.st[z]=c;c.fd=true;log('SET_TRAP');return true}
+function attack(k,ai,ti){const me=G.p[k],op=G.p[1-k],a=me.mz[ai];if(!a||a.ad||a.pos!='atk'||G.ph!='Battle'||G.turn==1)return false;
+ a.ad=1;const ti2=op.st.findIndex(c=>c&&c.id=='MF');
+ if(ti2>=0){log('ACTIVATE_TRAP Mirror Force!');kill(1-k,'st',ti2);me.mz.forEach((x,i)=>{if(x&&x.pos=='atk')kill(k,'mz',i)});return true}
+ if(ti<0){if(op.mz.some(x=>x))return false;op.lp-=a.atk;log('DIRECT_ATTACK '+a.n+' -'+a.atk);win();return true}
+ const t=op.mz[ti];if(!t)return false;log('DECLARE_ATTACK '+a.n+' -> '+t.n);if(t.fd){t.fd=false;log('Flip: '+t.n)}
+ const v=t.pos=='atk'?t.atk:t.def,d=a.atk-v;
+ if(d>0){kill(1-k,'mz',ti);if(t.pos=='atk'||false){op.lp-=d;log('Damage P'+(2-k)+' -'+d)}}
+ else if(d<0){if(t.pos=='atk'){kill(k,'mz',ai);me.lp+=d;log('Damage P'+(k+1)+' '+d)}else{me.lp+=d;log('Damage P'+(k+1)+' '+d)}}
+ else if(t.pos=='atk'){kill(1-k,'mz',ti);kill(k,'mz',ai)}
+ win();return true}
+function phase(p){if(G.over||G.t!=0)return;G.ph=p;if(p=='End')endTurn();render()}
+function endTurn(){G.p[G.t].mz.forEach(c=>c&&(c.ad=0));G.t^=1;G.turn++;G.ns=0;G.ph='Main';sel=null;log('END_TURN');
+ draw(G.t);G.p[G.t].mz.forEach(c=>c&&(c.ad=0));render();if(G.t==1&&!G.over)setTimeout(()=>{ai();render()},700)}
+// ===== AI =====
+function ai(){const me=G.p[1],op=G.p[0];const R=diff=='easy'?.5:1;
+ for(let i=me.hand.length-1;i>=0;i--){const c=me.hand[i];if(!c||c.t!='S')continue;
+  if(c.id=='DK'&&me.lp<3500)act(1,i);else if(c.id=='RG'&&op.mz.filter(x=>x).length>=2&&me.mz.filter(x=>x).length<2)act(1,i);else if(c.id=='PO'&&Math.random()<R)act(1,i)}
+ for(let i=me.hand.length-1;i>=0;i--)if(me.hand[i]&&me.hand[i].t=='T')setST(1,i);
+ const ms=me.hand.map((c,i)=>({c,i})).filter(x=>x.c.t!='S'&&x.c.t!='T').sort((a,b)=>b.c.atk-a.c.atk);
+ if(Math.random()<R){let done=false;for(const x of ms){if(summon(1,x.i,false)){done=true;break}}
+  if(!done&&ms.length&&free(1,'mz')>=0){const w=ms[ms.length-1];const i=me.hand.indexOf(w.c);if(i>=0)summon(1,i,true)}}
+ G.ph='Battle';if(G.turn>1)me.mz.forEach((a,ai_)=>{if(!a||a.pos!='atk'||G.over)return;
+  if(!op.mz.some(x=>x)){attack(1,ai_,-1);return}
+  let best=-1;op.mz.forEach((t,ti)=>{if(!t)return;const v=t.pos=='atk'&&!t.fd?t.atk:t.def;
+   if(a.atk>v&&(best<0||v>(op.mz[best].pos=='atk'?op.mz[best].atk:op.mz[best].def)))best=ti});
+  if(best>=0||(diff=='easy'&&Math.random()<.3))attack(1,ai_,best>=0?best:op.mz.findIndex(x=>x))});
+ G.ph='Main';if(!G.over)endTurn()}
+// ===== UI =====
+function ch(c,hide,i,zone,k){if(!c)return'';const bg=c.fd&&hide?'':'background:'+(c.id&&FU[c.id]?COL.F:COL[c.t]);
+ if(c.fd&&hide)return`<div class="card back ${c.pos=='def'?'def':''}"></div>`;
+ const m=c.t!='S'&&c.t!='T';const s=sel&&sel.z==zone&&sel.i==i&&sel.k==k;
+ return`<div class="card ${s?'sel':''} ${c.pos=='def'?'def':''}" style="${bg}" onclick="pick('${zone}',${i},${k})"><b>${c.n}</b><small>${AT[c.a]||''} ${m?'★'+c.lv:''} ${c.ty}</small><small>${c.fx.slice(0,60)}</small>${m?`<b>ATK ${c.atk} / DEF ${c.def}</b>`:''}</div>`}
+function pick(z,i,k){if(G.over)return;const c=G.p[k][z][i];
+ if(sel&&sel.z=='mz'&&sel.k==0&&k==1&&z=='mz'&&G.t==0){attack(0,sel.i,i);sel=null;return render()}
+ if(c&&!(c.fd&&k==1))$('#info').innerHTML=`<b>${c.n}</b> [${c.ty}] ${c.fx}`;sel={z,i,k};render()}
+function render(){if(!G)return;const p0=G.p[0],p1=G.p[1];
+ $('#l0').textContent='P1 (Anda) LP '+p0.lp;$('#l1').textContent='CPU ('+diff+') LP '+p1.lp;
+ $('#ph').textContent='Turn '+G.turn+' · '+(G.t?'CPU':'Anda')+' · '+G.ph;$('#dk').textContent='Deck '+p0.deck.length+' | GY '+p0.gy.length+' | Extra '+p0.ex.length;
+ const row=(id,k,z)=>$(id).innerHTML=[0,1,2].map(i=>`<div class="z">${ch(G.p[k][z][i],k==1,i,z,k)}</div>`).join('');
+ row('#m1',1,'mz');row('#s1',1,'st');row('#m0',0,'mz');row('#s0',0,'st');
+ $('#hand').innerHTML=p0.hand.map((c,i)=>`<div style="flex:none">${ch(c,false,i,'hand',0)}</div>`).join('');
+ let b='';if(!G.over&&G.t==0){const c=sel&&sel.k==0?p0[sel.z][sel.i]:null;
+  if(c&&sel.z=='hand'){if(c.t=='S')b+=`<button onclick="X(()=>act(0,${sel.i}))">Aktifkan</button>`;else if(c.t=='T')b+=`<button onclick="X(()=>setST(0,${sel.i}))">Set Trap</button>`;
+   else b+=`<button onclick="X(()=>summon(0,${sel.i},0))">Summon</button><button onclick="X(()=>summon(0,${sel.i},1))">Set</button>`}
+  if(c&&sel.z=='mz'&&G.ph=='Battle'&&!p1.mz.some(x=>x))b+=`<button onclick="X(()=>attack(0,${sel.i},-1))">Serang Langsung</button>`;
+  b+=`<button onclick="phase('Main')">Main</button><button onclick="phase('Battle')">Battle</button><button onclick="phase('End')">End Turn</button>`}
+ else if(G.over)b=`<button onclick="start()">Duel Lagi</button>`;
+ b+=`<select onchange="diff=this.value"><option ${diff=='easy'?'selected':''}>easy</option><option ${diff=='normal'?'selected':''}>normal</option><option ${diff=='hard'?'selected':''}>hard</option></select>`;
+ $('#ctl').innerHTML=b;$('#log').innerHTML=G.log.slice(-30).reverse().join('<br>');
+ try{localStorage.setItem('duel_replay',JSON.stringify(ev.slice(-500)))}catch(e){}}
+function X(f){if(!f())alert('Aksi tidak valid.');sel=null;render()}
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+start();
+</script></body></html>
